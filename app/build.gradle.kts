@@ -92,6 +92,7 @@ dependencies {
         exclude(group = "com.android.support")
     }
     implementation(libs.okhttp)
+    implementation(project(":innertube"))
 }
 
 generateBp {
