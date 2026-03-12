@@ -238,6 +238,13 @@ abstract class TwelveDatabase : RoomDatabase() {
                         )
                     """.trimIndent()
                 )
+
+                // don't need to manually add one on first launch.
+                db.execSQL(
+                    """
+                        INSERT INTO 'InnerTubeProvider' ('name', 'cookie') VALUES ('YouTube Music', NULL)
+                    """.trimIndent()
+                )
             }
         }
 
