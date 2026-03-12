@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.launch
 import org.lineageos.twelve.database.TwelveDatabase
 import org.lineageos.twelve.datasources.InnerTubeDataSource
 import org.lineageos.twelve.datasources.JellyfinDataSource
@@ -146,6 +147,15 @@ class ProvidersRepository(
                 )
             }
         }
+
+    init {
+        coroutineScope.launch(Dispatchers.IO) {
+            val dao = database.getInnerTubeProviderDao()
+            if (dao.count() == 0) {
+                dao.create(name = "YouTube Music", cookie = null)
+            }
+        }
+    }
 
     // All providers
     val allProvidersToArguments = combine(

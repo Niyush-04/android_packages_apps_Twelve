@@ -54,4 +54,10 @@ interface InnerTubeProviderDao {
      */
     @Query("SELECT * FROM InnerTubeProvider")
     fun getAll(): Flow<List<InnerTubeProvider>>
+
+    /**
+     * Count InnerTube providers.
+     */
+    @Query("SELECT COUNT(*) FROM InnerTubeProvider")
+    suspend fun count(): Int
 }
