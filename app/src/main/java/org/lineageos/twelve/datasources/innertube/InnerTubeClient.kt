@@ -199,4 +199,79 @@ class InnerTubeClient(private val cookie: String? = null) {
             continuation = songs.continuation
         )
     }
+    /**
+     * Holds one page of radio results.
+     *
+     * [endpointJson] is the JSON-serialized WatchEndpoint returned by YouTube.next() after it
+     * follows the automixPreviewVideoRenderer. This is the automix playlist endpoint
+     * (has playlistId + params) — NOT the original bare videoId endpoint. It MUST be
+     * passed back to [getRadioContinuation] unchanged so YouTube can continue the playlist.
+     */
+    data class RadioResult(
+        val songs: List<SongItem>,
+        val continuation: String?,
+        val endpointJson: String,
+    )
+
+    /**
+     * Starts a YouTube Music radio/autoplay chain for [videoId].
+     *
+     * Internally YouTube.next() with a bare videoId returns 1 song + an automixPreviewVideoRenderer.
+     * The library code recursively follows that to the real automix playlist endpoint,
+     * which is what has the actual related songs and a real continuation token.
+     *
+     * We log extensively here so you can see exactly what comes back.
+     */
+    suspend fun getRadio(videoId: String): RadioResult? {
+        ensureVisitorData()
+        val result = YouTube.next(WatchEndpoint(videoId = videoId))
+            .onFailure { Log.e(TAG, "getRadio YouTube.next() failed for $videoId", it) }
+            .getOrNull() ?: return null
+
+        Log.d(TAG, "getRadio: items=${result.items.size} continuation=${result.continuation} endpoint.videoId=${result.endpoint.videoId} endpoint.playlistId=${result.endpoint.playlistId} endpoint.params=${result.endpoint.params}")
+
+        if (result.items.isEmpty()) {
+            Log.w(TAG, "getRadio: got 0 items — automix may have failed silently")
+            return null
+        }
+
+        val endpointJson = kotlinx.serialization.json.Json.encodeToString(
+            WatchEndpoint.serializer(), result.endpoint
+        )
+        Log.d(TAG, "getRadio: endpointJson=$endpointJson")
+
+        return RadioResult(
+            songs = result.items,
+            continuation = result.continuation,
+            endpointJson = endpointJson,
+        )
+    }
+
+    /**
+     * Fetches the next page of radio songs.
+     * [endpointJson] must be exactly [RadioResult.endpointJson] from a previous call —
+     * it encodes the auto mix playlist WatchEndpoint (playlistId, params, etc.).
+     */
+    suspend fun getRadioContinuation(endpointJson: String, continuation: String): RadioResult? {
+        ensureVisitorData()
+        val endpoint = runCatching {
+            kotlinx.serialization.json.Json.decodeFromString(
+                WatchEndpoint.serializer(), endpointJson
+            )
+        }.getOrElse { return null }
+
+        val result = YouTube.next(endpoint, continuation)
+            .onFailure { Log.e(TAG, "getRadioContinuation YouTube.next() failed", it) }
+            .getOrNull() ?: return null
+
+        val nextEndpointJson = kotlinx.serialization.json.Json.encodeToString(
+            WatchEndpoint.serializer(), result.endpoint
+        )
+
+        return RadioResult(
+            songs = result.items,
+            continuation = result.continuation,
+            endpointJson = nextEndpointJson,
+        )
+    }
 }

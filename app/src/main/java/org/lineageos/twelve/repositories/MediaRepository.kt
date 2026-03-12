@@ -451,6 +451,11 @@ class MediaRepository(
         )
     }
 
+    suspend fun radioFor(audioUri: Uri) = innerTubeDataSource.radioFor(audioUri)
+
+    suspend fun radioNextPage(audioUri: Uri, continuationToken: String) =
+        innerTubeDataSource.radioNextPage(audioUri, continuationToken)
+
     /**
      * Resolves a youtubemusicc:// URI to a real HTTPS stream URL.
      * Called lazily by ResolvingDataSource in PlaybackService so ExoPlayer

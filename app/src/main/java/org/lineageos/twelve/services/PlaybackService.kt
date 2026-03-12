@@ -181,6 +181,10 @@ class PlaybackService : MediaLibraryService(), LifecycleOwner {
     override val lifecycle: Lifecycle
         get() = dispatcher.lifecycle
 
+    private var radioSourceUri: android.net.Uri? = null
+    private var radioContinuationToken: String? = null
+    private var radioFetching = false
+
     private lateinit var player: ExoPlayer
     private lateinit var mediaLibrarySession: MediaLibrarySession
 
@@ -353,6 +357,8 @@ class PlaybackService : MediaLibraryService(), LifecycleOwner {
             startIndex: Int,
             startPositionMs: Long,
         ) = lifecycleScope.future {
+            radioSourceUri = null
+            radioContinuationToken = null
             val resolvedMediaItems = mediaRepositoryTree.resolveMediaItems(mediaItems)
 
             launch {
@@ -522,6 +528,11 @@ class PlaybackService : MediaLibraryService(), LifecycleOwner {
                                 player.currentPosition,
                             )
                         }
+                    }
+                    // InnerTube autoplay: when ≤3 songs remain in an InnerTube queue,
+                    // fetch the next radio page and append songs silently.
+                    lifecycleScope.launch {
+                        maybeExtendInnerTubeQueue()
                     }
                 }
 
@@ -721,6 +732,71 @@ class PlaybackService : MediaLibraryService(), LifecycleOwner {
             resumptionPlaylist.startPositionMs
         )
         player.prepare()
+    }
+
+    /**
+     * If we're playing an InnerTube queue and running low on songs (≤3 remaining),
+     * fetch the next radio page and append the songs to ExoPlayer's queue.
+     */
+    private suspend fun maybeExtendInnerTubeQueue() {
+        val currentItem = player.currentMediaItem ?: return
+        val currentUri = currentItem.mediaId.toUri()
+        if (currentUri.scheme != "youtubemusicc") {
+            // Left InnerTube queue — reset
+            radioSourceUri = null
+            radioContinuationToken = null
+            return
+        }
+
+        val remaining = player.mediaItemCount - player.currentMediaItemIndex - 1
+        if (remaining > 3 || radioFetching) return
+
+        radioFetching = true
+        try {
+            val page = if (radioSourceUri == null) {
+                // Start radio from the current song
+                radioSourceUri = currentUri
+                mediaRepository.radioFor(currentUri)
+            } else {
+                val token = radioContinuationToken ?: run {
+                    Log.d("PlaybackService", "Autoplay: no more radio pages")
+                    return@maybeExtendInnerTubeQueue
+                }
+                mediaRepository.radioNextPage(radioSourceUri!!, token)
+            }
+
+            if (page != null && page.songs.isNotEmpty()) {
+                radioContinuationToken = page.continuationToken
+                val mediaItems = page.songs.map { audio ->
+                    MediaItem.Builder()
+                        .setMediaId(audio.uri.toString())
+                        .setUri(audio.uri)
+                        .setMediaMetadata(
+                            androidx.media3.common.MediaMetadata.Builder()
+                                .setTitle(audio.title)
+                                .setArtist(audio.artistName)
+                                .setAlbumTitle(audio.albumTitle)
+                                .setArtworkUri(audio.thumbnail?.uri)
+                                .setIsPlayable(true)
+                                .setIsBrowsable(false)
+                                .build()
+                        )
+                        .build()
+                }
+                if (player.playbackState != Player.STATE_IDLE) {
+                    // player must be accessed on its application looper (main thread)
+                    withContext(Dispatchers.Main) {
+                        player.addMediaItems(mediaItems)
+                    }
+                }
+            } else {
+                radioContinuationToken = null
+            }
+        } catch (e: Exception) {
+            Log.w("PlaybackService", "Autoplay fetch failed: ${e.message}", e)
+        } finally {
+            radioFetching = false
+        }
     }
 
     companion object {
