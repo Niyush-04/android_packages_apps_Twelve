@@ -263,6 +263,16 @@ class MediaRepositoryTree(
             when {
                 searchQuery != null -> addAll(search(searchQuery))
                 item.localConfiguration?.uri != null -> add(item)
+                // InnerTube items: return immediately with the internal URI as sourceUri.
+                // ResolvingDataSource in PlaybackService will lazily resolve the real
+                // stream URL when ExoPlayer actually needs bytes — no blocking here.
+                item.mediaId.startsWith("youtubemusicc://") -> {
+                    add(
+                        item.buildUpon()
+                            .setUri(item.mediaId)
+                            .build()
+                    )
+                }
                 else -> getItem(item.mediaId)?.let { mediaItem ->
                     add(mediaItem)
                 }

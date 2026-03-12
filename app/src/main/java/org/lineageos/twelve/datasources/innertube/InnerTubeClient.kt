@@ -81,39 +81,40 @@ class InnerTubeClient(private val cookie: String? = null) {
      */
     suspend fun getStreamUrl(videoId: String): String? {
         ensureVisitorData()
-        val clients = listOf(
-            YouTubeClient.ANDROID_VR_NO_AUTH,
-            YouTubeClient.IOS,
-            YouTubeClient.WEB_REMIX,
-        )
-        for (client in clients) {
-            runCatching {
-                YouTube.player(
-                    videoId = videoId,
-                    playlistId = null,
-                    client = client,
-                    signatureTimestamp = null,
-                )
-            }.getOrNull()?.getOrNull()?.let { playerResponse ->
-                if (playerResponse.playabilityStatus.status != "OK")
-                    return@let
+        // Use ANDROID_VR_NO_AUTH only — it's the most reliable client for anonymous
+        // audio-only streams and doesn't require signature timestamps.
+        // Removed multi-client fallback: serial retries were causing 30s+ delays on failure.
+        return resolveUrl(videoId, YouTubeClient.ANDROID_VR_NO_AUTH)
+            ?: resolveUrl(videoId, YouTubeClient.IOS)
+            ?: run {
+                Log.w(TAG, "Failed to resolve stream URL for $videoId")
+                null
+            }
+    }
 
-                val streamingData = playerResponse.streamingData ?: return@let
+    private suspend fun resolveUrl(videoId: String, client: YouTubeClient): String? =
+        runCatching {
+            YouTube.player(
+                videoId = videoId,
+                playlistId = null,
+                client = client,
+                signatureTimestamp = null,
+            ).getOrNull()
+        }.getOrNull()?.let { playerResponse ->
+            if (playerResponse.playabilityStatus.status != "OK") return null
+            val streamingData = playerResponse.streamingData ?: return null
 
-                val bestAudio = streamingData.adaptiveFormats
-                    .filter { it.isAudio && it.url != null }
-                    .maxByOrNull { it.bitrate }
+            val bestAudio = streamingData.adaptiveFormats
+                .filter { it.isAudio && it.url != null }
+                .maxByOrNull { it.bitrate }
+            val bestCombined = streamingData.formats
+                ?.filter { it.url != null }
+                ?.maxByOrNull { it.bitrate }
 
-                val bestCombined = streamingData.formats
-                    ?.filter { it.url != null }
-                    ?.maxByOrNull { it.bitrate }
-
-                val url = (bestAudio ?: bestCombined)?.url
-                if (url != null) return url
+            (bestAudio ?: bestCombined)?.url?.also {
+                Log.d(TAG, "Resolved stream for $videoId via ${client.clientName}")
             }
         }
-        return null
-    }
 
     /**
      * Fetches full song metadata for [videoId] using the InnerTube `next` endpoint.
