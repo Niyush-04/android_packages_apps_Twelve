@@ -146,7 +146,7 @@ class InnerTubeDataSource(
                 .setDurationMs(duration?.toLong()?.times(1000L))
                 .setThumbnail(
                     Thumbnail.Builder()
-                        .setUri(thumbnail.toUri())
+                        .setUri(thumbnail.resize().toUri())
                         .setType(Thumbnail.Type.FRONT_COVER)
                         .build()
                 ).build()
@@ -160,7 +160,7 @@ class InnerTubeDataSource(
                 .setYear(year)
                 .setThumbnail(
                     Thumbnail.Builder()
-                        .setUri(thumbnail.toUri())
+                        .setUri(thumbnail.resize().toUri())
                         .setType(Thumbnail.Type.FRONT_COVER)
                         .build()
                 )
@@ -172,7 +172,7 @@ class InnerTubeDataSource(
                 .setThumbnail(
                     thumbnail.takeIf { it.isNotEmpty() }?.let {
                         Thumbnail.Builder()
-                            .setUri(it.toUri())
+                            .setUri(it.resize(1200, 1200).toUri())
                             .setType(Thumbnail.Type.BAND_ARTIST_LOGO)
                             .build()
                     }
@@ -514,6 +514,24 @@ class InnerTubeDataSource(
         private const val ARTISTS_PATH = "artists"
         private const val AUDIOS_PATH = "audios"
         private const val PLAYLISTS_PATH = "playlists"
+
+        /**
+         * Rewrites a YouTube CDN thumbnail URL to request a specific resolution.
+         * YouTube serves thumbnails via lh3.googleusercontent.com with a size suffix
+         * like `=w226-h226`. Replacing it with a larger value gets a higher-res image.
+         * Default 576x576 — large enough for Now Playing without being wasteful.
+         */
+        private fun String.resize(width: Int = 576, height: Int = 576): String {
+            val lh3Regex = Regex("""https://lh3\.googleusercontent\.com/.*=w(\d+)-h(\d+).*""")
+            if (lh3Regex.matches(this)) {
+                return "${split("=w")[0]}=w$width-h$height-p-l90-rj"
+            }
+            val yt3Regex = Regex("""https://yt3\.ggpht\.com/.*=s\d+""")
+            if (this matches yt3Regex) {
+                return "$this-s$width"
+            }
+            return this
+        }
 
         /**
          * Optional YouTube Music cookie for authenticated access.
