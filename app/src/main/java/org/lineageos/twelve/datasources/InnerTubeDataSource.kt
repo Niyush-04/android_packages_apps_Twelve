@@ -9,6 +9,7 @@ import android.net.Uri
 import androidx.core.net.toUri
 import com.arturo254.innertube.models.AlbumItem
 import com.arturo254.innertube.models.ArtistItem
+import com.arturo254.innertube.models.PlaylistItem
 import com.arturo254.innertube.models.SongItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -78,6 +79,9 @@ class InnerTubeDataSource(
         fun getAudioUri(videoId: String): Uri =
             audiosUri.buildUpon().appendPath(videoId).build()
 
+        fun getPlaylistUri(playlistId: String): Uri =
+            playlistsUri.buildUpon().appendPath(playlistId).build()
+
         // Model mappers
         fun SongItem.toAudio(): Audio =
             Audio.Builder(getAudioUri(id))
@@ -120,6 +124,16 @@ class InnerTubeDataSource(
                     }
                 )
                 .build()
+
+        fun PlaylistItem.toPlaylist(): Playlist =
+            Playlist.Builder(getPlaylistUri(id))
+                .setName(title)
+                .setThumbnail(
+                    Thumbnail.Builder()
+                        .setUri(thumbnail.toUri())
+                        .setType(Thumbnail.Type.FRONT_COVER)
+                        .build()
+                ).build()
     }
 
     // ProvidersManager
@@ -172,12 +186,12 @@ class InnerTubeDataSource(
                 ?: return@mapWithInstanceOf Result.Success(emptyList<ActivityTab>())
 
             val tabs = homePage.sections.mapNotNull { section ->
-                val items: List<MediaItem<*>> = section.items.mapNotNull { item ->
+                val items: List<MediaItem<*>> = section.items.map { item ->
                     when (item) {
                         is SongItem -> item.toAudio()
                         is AlbumItem -> item.toAlbum()
                         is ArtistItem -> item.toArtist()
-                        else -> null
+                        is PlaylistItem -> item.toPlaylist()
                     }
                 }.ifEmpty { return@mapNotNull null }
 
@@ -329,9 +343,7 @@ class InnerTubeDataSource(
                     emit(Result.Error<Pair<Playlist, List<Audio>>, Error>(Error.NOT_FOUND))
                     return@flow
                 }
-                val playlist = Playlist.Builder(playlistUri)
-                    .setName(page.playlist.title)
-                    .build()
+                val playlist = page.playlist.toPlaylist()
                 emit(Result.Success(playlist to page.songs.map { it.toAudio() }))
             }
         }
