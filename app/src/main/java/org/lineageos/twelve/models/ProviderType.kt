@@ -8,6 +8,7 @@ package org.lineageos.twelve.models
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import org.lineageos.twelve.R
+import org.lineageos.twelve.datasources.InnerTubeDataSource
 import org.lineageos.twelve.datasources.JellyfinDataSource
 import org.lineageos.twelve.datasources.MediaDataSource
 import org.lineageos.twelve.datasources.SubsonicDataSource
@@ -69,6 +70,24 @@ enum class ProviderType(
             JellyfinDataSource.ARG_SERVER,
             JellyfinDataSource.ARG_USERNAME,
             JellyfinDataSource.ARG_PASSWORD,
+        ),
+        true,
+    ),
+    /**
+     * YouTube Music via InnerTube.
+     *
+     * Streams audio ad-free directly from YouTube Music using the internal
+     * InnerTube API. No API key is required. An optional cookie can be
+     * provided for authenticated access (required for age-restricted content
+     * and personal library features).
+     *
+     * @see <a href="https://music.youtube.com">YouTube Music</a>
+     */
+    INNERTUBE(
+        R.string.provider_type_innertube,
+        R.drawable.ic_yt_music,
+        listOf(
+            InnerTubeDataSource.ARG_COOKIE,
         ),
         true,
     )
