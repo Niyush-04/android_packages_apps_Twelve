@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.shareIn
 import org.lineageos.twelve.database.TwelveDatabase
+import org.lineageos.twelve.datasources.InnerTubeDataSource
 import org.lineageos.twelve.datasources.JellyfinDataSource
 import org.lineageos.twelve.datasources.MediaStoreDataSource
 import org.lineageos.twelve.datasources.SubsonicDataSource
@@ -33,6 +34,7 @@ import org.lineageos.twelve.ext.preferenceFlow
 import org.lineageos.twelve.ext.splitLocalDevices
 import org.lineageos.twelve.ext.storageVolumesFlow
 import org.lineageos.twelve.models.Provider
+import org.lineageos.twelve.models.ProviderArgument.Companion.getArgument
 import org.lineageos.twelve.models.ProviderArgument.Companion.requireArgument
 import org.lineageos.twelve.models.ProviderIdentifier
 import org.lineageos.twelve.models.ProviderType
@@ -133,11 +135,26 @@ class ProvidersRepository(
             }
         }
 
+    // InnerTube (YouTube Music)
+    private val innerTubeProviders = database.getInnerTubeProviderDao().getAll()
+        .mapLatest {
+            it.map { provider ->
+                Provider(
+                    ProviderType.INNERTUBE,
+                    provider.id,
+                    provider.name,
+                ) to bundleOf(
+                    InnerTubeDataSource.ARG_COOKIE.key to provider.cookie,
+                )
+            }
+        }
+
     // All providers
     val allProvidersToArguments = combine(
         mediaStoreProviders,
         subsonicProviders,
         jellyfinProviders,
+        innerTubeProviders
     ) { it ->
         buildList {
             it.forEach {
@@ -224,6 +241,13 @@ class ProvidersRepository(
 
             providerType to typeId
         }
+
+        ProviderType.INNERTUBE -> {
+            val cookie = arguments.getArgument(InnerTubeDataSource.ARG_COOKIE)
+            val typeId = database.getInnerTubeProviderDao().create(name, cookie)
+
+            providerType to typeId
+        }
     }
 
     /**
@@ -272,6 +296,13 @@ class ProvidersRepository(
                     password
                 )
             }
+
+            ProviderType.INNERTUBE -> {
+                val cookie = arguments.getArgument(InnerTubeDataSource.ARG_COOKIE)
+                database.getInnerTubeProviderDao().update(
+                    providerIdentifier.typeId, name, cookie
+                )
+            }
         }
     }
 
@@ -289,6 +320,10 @@ class ProvidersRepository(
             )
 
             ProviderType.JELLYFIN -> database.getJellyfinProviderDao().delete(
+                providerIdentifier.typeId
+            )
+
+            ProviderType.INNERTUBE -> database.getInnerTubeProviderDao().delete(
                 providerIdentifier.typeId
             )
         }

@@ -158,6 +158,16 @@
     <string name="provider_type_subsonic" translatable="false">Subsonic / OpenSubsonic / Navidrome</string>
     <string name="provider_type_jellyfin" translatable="false">Jellyfin</string>
 
+    <!-- InnerTube / YouTube Music provider display name -->
+    <string name="provider_type_innertube" translatable="false">YouTube Music</string>
+
+    <!-- Argument labels shown in the "Add provider" dialog -->
+    <string name="innertube_arg_cookie">Cookie (optional – for authenticated access)</string>
+
+    <!-- Status screen strings (key label + value) -->
+    <string name="innertube_status_key">Connection</string>
+    <string name="innertube_status_connected">Connected</string>
+
     <!-- Provider arguments -->
     <string name="provider_argument_server">Server</string>
     <string name="provider_argument_username">Username</string>

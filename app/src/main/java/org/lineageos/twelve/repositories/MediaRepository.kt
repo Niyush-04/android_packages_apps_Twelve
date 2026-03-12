@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import okhttp3.Cache
 import org.lineageos.twelve.database.TwelveDatabase
 import org.lineageos.twelve.datasources.FileDataSource
+import org.lineageos.twelve.datasources.InnerTubeDataSource
 import org.lineageos.twelve.datasources.JellyfinDataSource
 import org.lineageos.twelve.datasources.MediaDataSource
 import org.lineageos.twelve.datasources.MediaStoreDataSource
@@ -98,6 +99,14 @@ class MediaRepository(
     )
 
     /**
+     * InnerTube (YouTube Music) data source.
+     */
+    private val innerTubeDataSource = InnerTubeDataSource(
+        scope,
+        providersRepository,
+    )
+
+    /**
      * File data source.
      */
     private val fileDataSource = FileDataSource(
@@ -110,6 +119,7 @@ class MediaRepository(
             mediaStoreDataSource,
             subsonicDataSource,
             jellyfinDataSource,
+            innerTubeDataSource,
             fileDataSource,
         )
     ).asStateFlow()
@@ -359,6 +369,7 @@ class MediaRepository(
         ProviderType.MEDIASTORE -> mediaStoreDataSource
         ProviderType.SUBSONIC -> subsonicDataSource
         ProviderType.JELLYFIN -> jellyfinDataSource
+        ProviderType.INNERTUBE -> innerTubeDataSource
     }
 
     /**

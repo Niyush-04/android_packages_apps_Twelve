@@ -20,6 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import org.lineageos.twelve.database.converters.InstantConverter
 import org.lineageos.twelve.database.converters.UriConverter
 import org.lineageos.twelve.database.dao.FavoriteDao
+import org.lineageos.twelve.database.dao.InnerTubeProviderDao
 import org.lineageos.twelve.database.dao.JellyfinProviderDao
 import org.lineageos.twelve.database.dao.MediaStatsDao
 import org.lineageos.twelve.database.dao.PlaylistDao
@@ -28,6 +29,7 @@ import org.lineageos.twelve.database.dao.PlaylistWithItemsDao
 import org.lineageos.twelve.database.dao.ResumptionPlaylistDao
 import org.lineageos.twelve.database.dao.SubsonicProviderDao
 import org.lineageos.twelve.database.entities.Favorite
+import org.lineageos.twelve.database.entities.InnerTubeProvider
 import org.lineageos.twelve.database.entities.JellyfinProvider
 import org.lineageos.twelve.database.entities.LocalMediaStats
 import org.lineageos.twelve.database.entities.Playlist
@@ -50,13 +52,14 @@ import org.lineageos.twelve.database.entities.SubsonicProvider
         ResumptionPlaylist::class,
 
         /* Providers */
+        InnerTubeProvider::class,
         JellyfinProvider::class,
         SubsonicProvider::class,
 
         /* Local Media Stats */
         LocalMediaStats::class,
     ],
-    version = 8,
+    version = 9,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -64,7 +67,7 @@ import org.lineageos.twelve.database.entities.SubsonicProvider
         AutoMigration(from = 4, to = 5),
         AutoMigration(from = 5, to = 6),
         AutoMigration(from = 6, to = 7, spec = TwelveDatabase.Companion.MigrationSpec6To7::class),
-        // 7 to 8 is done manually
+        // 8 to 9 is done manually (add InnerTubeProvider table)
     ],
 )
 @TypeConverters(
@@ -73,6 +76,7 @@ import org.lineageos.twelve.database.entities.SubsonicProvider
 )
 abstract class TwelveDatabase : RoomDatabase() {
     abstract fun getFavoriteDao(): FavoriteDao
+    abstract fun getInnerTubeProviderDao(): InnerTubeProviderDao
     abstract fun getJellyfinProviderDao(): JellyfinProviderDao
     abstract fun getLocalMediaStatsProviderDao(): MediaStatsDao
     abstract fun getPlaylistDao(): PlaylistDao
@@ -222,12 +226,27 @@ abstract class TwelveDatabase : RoomDatabase() {
             }
         }
 
+        object Migration8To9 : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase){
+                db.execSQL(
+                    """
+                        CREATE TABLE IF NOT EXISTS 'InnerTubeProvider'
+                        (
+                            'innertube_provider_id' INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            'name' TEXT NOT NULL,
+                            'cookie' TEXT
+                        )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun get(context: Context) = Room.databaseBuilder(
             context.applicationContext,
             TwelveDatabase::class.java,
             "twelve_database",
         )
-            .addMigrations(Migration7To8)
+            .addMigrations(Migration7To8, Migration8To9)
             .build()
     }
 }
