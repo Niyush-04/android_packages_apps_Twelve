@@ -330,8 +330,7 @@ class InnerTubeDataSource(
             }
         }
 
-// Audios
-
+    // Audios
     override fun audios(
         providerIdentifier: ProviderIdentifier,
         sortingRule: SortingRule,
@@ -455,6 +454,60 @@ class InnerTubeDataSource(
     }
 
     /**
+     * Fetches a radio/autoplay playlist starting from [audioUri].
+     */
+    suspend fun radioFor(audioUri: Uri): RadioPage? {
+        if (audioUri.scheme != "youtubemusicc") return null
+        val videoId = audioUri.lastPathSegment ?: return null
+        var result: RadioPage? = null
+        providersManager.doWithInstanceOf(audioUri) {
+            val radioResult = client.getRadio(videoId)
+            if (radioResult != null) {
+                // Drop the first item — it's the song currently playing
+                val songs = radioResult.songs.drop(1).map { it.toAudio() }
+                prewarmStreams(songs.map { it.uri.lastPathSegment!! })
+                val contToken = radioResult.continuation?.let { cont ->
+                    radioResult.endpointJson + SEPARATOR + cont
+                }
+                result = RadioPage(songs = songs, continuationToken = contToken)
+            }
+            Result.Success(Unit)
+        }
+        return result
+    }
+
+    /**
+     * Fetches the next page of radio songs using [continuationToken] from a previous
+     * [radioFor] or [radioNextPage] call.
+     */
+    suspend fun radioNextPage(audioUri: Uri, continuationToken: String): RadioPage? {
+        if (audioUri.scheme != "youtubemusicc") return null
+        val sepIdx = continuationToken.indexOf(SEPARATOR)
+        if (sepIdx < 0) return null
+        val endpointJson = continuationToken.substring(0, sepIdx)
+        val continuation = continuationToken.substring(sepIdx + SEPARATOR.length)
+        var result: RadioPage? = null
+        providersManager.doWithInstanceOf(audioUri) {
+            val radioResult = client.getRadioContinuation(endpointJson, continuation)
+            if (radioResult != null) {
+                val songs = radioResult.songs.map { it.toAudio() }
+                prewarmStreams(songs.map { it.uri.lastPathSegment!! })
+                val contToken = radioResult.continuation?.let { cont ->
+                    radioResult.endpointJson + SEPARATOR + cont
+                }
+                result = RadioPage(songs = songs, continuationToken = contToken)
+            }
+            Result.Success(Unit)
+        }
+        return result
+    }
+
+    data class RadioPage(
+        val songs: List<Audio>,
+        val continuationToken: String?,
+    )
+
+    /**
      * Directly resolves a youtubemusicc:// audio URI to an HTTPS stream URL.
      * Used by ResolvingDataSource in PlaybackService for lazy resolution —
      * called only when ExoPlayer actually needs bytes, not before.
@@ -514,6 +567,7 @@ class InnerTubeDataSource(
         private const val ARTISTS_PATH = "artists"
         private const val AUDIOS_PATH = "audios"
         private const val PLAYLISTS_PATH = "playlists"
+        private const val SEPARATOR = "||CONT||"
 
         /**
          * Rewrites a YouTube CDN thumbnail URL to request a specific resolution.
