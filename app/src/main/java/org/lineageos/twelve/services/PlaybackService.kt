@@ -28,7 +28,11 @@ import androidx.media3.common.Player
 import androidx.media3.common.Rating
 import androidx.media3.common.listen
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
@@ -449,6 +453,23 @@ class PlaybackService : MediaLibraryService(), LifecycleOwner {
             .setUsage(C.USAGE_MEDIA)
             .build()
 
+        // ResolvingDataSource: intercepts youtubemusicc:// URIs and resolves them
+        // to real HTTPS stream URLs lazily — only when ExoPlayer needs bytes.
+        // This lets playback start immediately on tap with no blocking network call.
+        val resolvingDataSourceFactory = ResolvingDataSource.Factory(
+            DefaultDataSource.Factory(this, DefaultHttpDataSource.Factory())
+        ) { dataSpec ->
+            val uri = dataSpec.uri
+            if (uri.scheme == "youtubemusicc") {
+                val streamUri = kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                    mediaRepository.resolveStreamUri(uri)
+                }
+                streamUri?.let { dataSpec.withUri(it) } ?: throw Exception("Failed to resolve stream for $uri")
+            } else {
+                dataSpec
+            }
+        }
+
         player = ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
@@ -458,6 +479,7 @@ class PlaybackService : MediaLibraryService(), LifecycleOwner {
                     sharedPreferences.enableFloatOutput
                 ) { audioTrackFlow.value = it }
             )
+            .setMediaSourceFactory(DefaultMediaSourceFactory(resolvingDataSourceFactory))
             .setSkipSilenceEnabled(sharedPreferences.skipSilence)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .experimentalSetDynamicSchedulingEnabled(true)

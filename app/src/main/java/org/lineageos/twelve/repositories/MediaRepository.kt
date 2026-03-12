@@ -452,6 +452,14 @@ class MediaRepository(
     }
 
     /**
+     * Resolves a youtubemusicc:// URI to a real HTTPS stream URL.
+     * Called lazily by ResolvingDataSource in PlaybackService so ExoPlayer
+     * starts immediately without blocking on a network call.
+     */
+    suspend fun resolveStreamUri(uri: Uri): Uri? =
+        innerTubeDataSource.resolveStreamUriDirect(uri)
+
+    /**
      * Remove items that are no longer in the local data source from the local media stats table.
      */
     private suspend fun gcLocalMediaStats() {

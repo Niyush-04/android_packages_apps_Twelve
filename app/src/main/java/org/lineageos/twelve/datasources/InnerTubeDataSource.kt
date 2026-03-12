@@ -12,9 +12,11 @@ import com.arturo254.innertube.models.ArtistItem
 import com.arturo254.innertube.models.PlaylistItem
 import com.arturo254.innertube.models.SongItem
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import org.lineageos.twelve.R
 import org.lineageos.twelve.datasources.innertube.InnerTubeClient
 import org.lineageos.twelve.models.ActivityTab
@@ -39,6 +41,7 @@ import org.lineageos.twelve.models.Result
 import org.lineageos.twelve.models.SortingRule
 import org.lineageos.twelve.models.Thumbnail
 import org.lineageos.twelve.repositories.ProvidersRepository
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * YouTube Music data source powered by InnerTube.
@@ -49,11 +52,11 @@ import org.lineageos.twelve.repositories.ProvidersRepository
  */
 
 class InnerTubeDataSource(
-    coroutineScope: CoroutineScope,
+    private val coroutineScope: CoroutineScope,
     providersRepository: ProvidersRepository
 ) : MediaDataSource {
     /* Inner instance - one per configured provider entry */
-    private class InnerTubeInstance(
+    private inner class InnerTubeInstance(
         cookie: String?
     ) : ProvidersManager.Instance {
         private val BASE_SCHEME = "youtubemusicc"
@@ -65,6 +68,56 @@ class InnerTubeDataSource(
         val playlistsUri: Uri = BASE_URI.buildUpon().appendPath(PLAYLISTS_PATH).build()
 
         val client = InnerTubeClient(cookie)
+
+        /**
+         * Metadata cache keyed by videoId.
+         * Populated whenever SongItems are mapped via toAudio() (playlists, albums, activity).
+         * Used by audio() to restore title/artist/thumbnail alongside the resolved stream URL,
+         * without needing a second network round-trip.
+         */
+        val metadataCache = ConcurrentHashMap<String, Audio>()
+
+        /**
+         * Stream URL cache: videoId -> (url, fetchTimeMs).
+         * Pre-warmed in the background when song lists load so audio() can return instantly.
+         * URLs expire after ~6 hours per YouTube; we conservatively evict after 4 hours.
+         */
+        private val streamCache = ConcurrentHashMap<String, Pair<String, Long>>()
+        private val STREAM_TTL_MS = 4 * 60 * 60 * 1000L // 4 hours
+
+        fun getCachedStream(videoId: String): String? {
+            val entry = streamCache[videoId] ?: return null
+            val (url, fetchedAt) = entry
+            return if (System.currentTimeMillis() - fetchedAt < STREAM_TTL_MS) url else {
+                streamCache.remove(videoId)
+                null
+            }
+        }
+
+        fun putCachedStream(videoId: String, url: String) {
+            streamCache[videoId] = url to System.currentTimeMillis()
+        }
+
+        /**
+         * Pre-fetch stream URLs for a list of videoIds in the background.
+         * Called after playlist/album/activity loads so by the time the user
+         * taps a song, the URL is already cached and audio() returns instantly.
+         * Limits to first 5 tracks to avoid hammering the API.
+         */
+        /**
+         * Pre-fetch stream URLs in the background so audio() returns instantly.
+         * - First videoId is fetched immediately (most likely to be played next).
+         * - Remaining up to 9 are fetched with a stagger to avoid rate limiting.
+         */
+        fun prewarmStreams(videoIds: List<String>) {
+            val toFetch = videoIds.filter { getCachedStream(it) == null }.take(10)
+            toFetch.forEachIndexed { index, videoId ->
+                coroutineScope.launch {
+                    if (index > 0) delay(index * 300L)
+                    client.getStreamUrl(videoId)?.let { putCachedStream(videoId, it) }
+                }
+            }
+        }
 
         override suspend fun isMediaItemCompatible(mediaItemUri: Uri) =
             mediaItemUri.scheme == BASE_SCHEME
@@ -97,6 +150,7 @@ class InnerTubeDataSource(
                         .setType(Thumbnail.Type.FRONT_COVER)
                         .build()
                 ).build()
+                .also { metadataCache[id] = it }
 
         fun AlbumItem.toAlbum(): Album =
             Album.Builder(getAlbumUri(browseId))
@@ -201,6 +255,12 @@ class InnerTubeDataSource(
                     items = items,
                 )
             }
+            // Prewarm stream URLs for all songs visible on the home page
+            val allSongIds = tabs.flatMap { tab ->
+                tab.items.filterIsInstance<Audio>().mapNotNull { it.uri.lastPathSegment }
+            }
+            prewarmStreams(allSongIds)
+
             Result.Success(tabs)
         }
 
@@ -222,7 +282,9 @@ class InnerTubeDataSource(
                     emit(Result.Error<Pair<Album, List<Audio>>, Error>(Error.NOT_FOUND))
                     return@flow
                 }
-                emit(Result.Success(albumPage.album.toAlbum() to albumPage.songs.map { it.toAudio() }))
+                val songs = albumPage.songs.map { it.toAudio() }
+                prewarmStreams(songs.map { it.uri.lastPathSegment!! })
+                emit(Result.Success(albumPage.album.toAlbum() to songs))
             }
         }
 
@@ -252,6 +314,7 @@ class InnerTubeDataSource(
                     .flatMap { it.items }
                     .filterIsInstance<SongItem>()
                     .map { it.toAudio() }
+                prewarmStreams(songs.map { it.uri.lastPathSegment!! })
 
                 val albums = artistPage.sections
                     .flatMap { it.items }
@@ -285,29 +348,26 @@ class InnerTubeDataSource(
             val videoId = audioUri.lastPathSegment
                 ?: return@flatMapWithInstanceOf flowOf(Result.Error(Error.NOT_FOUND))
             flow {
-                val streamUrl = client.getStreamUrl(videoId)
+                // Check stream cache first — if prewarmStreams() already fetched
+                // this URL in the background, we return instantly with no network call.
+                val streamUrl = getCachedStream(videoId)
+                    ?: client.getStreamUrl(videoId)?.also { putCachedStream(videoId, it) }
                 if (streamUrl == null) {
                     emit(Result.Error<Audio, Error>(Error.IO))
                     return@flow
                 }
-                val songInfo = client.getSongInfo(videoId)
+                val cached = metadataCache[videoId]
                 val audio = Audio.Builder(audioUri)
                     .setPlaybackUri(streamUrl.toUri())
                     .setMimeType("audio/mp4")
-                    .setTitle(songInfo?.title)
-                    .setArtistName(songInfo?.artists?.firstOrNull()?.name)
-                    .setArtistUri(songInfo?.artists?.firstOrNull()?.id?.let { getArtistUri(it) })
-                    .setAlbumTitle(songInfo?.album?.name)
-                    .setAlbumUri(songInfo?.album?.id?.let { getAlbumUri(it) })
-                    .setDurationMs(songInfo?.duration?.toLong()?.times(1000L))
-                    .setThumbnail(
-                        songInfo?.thumbnail?.let { thumbUrl ->
-                            Thumbnail.Builder()
-                                .setUri(thumbUrl.toUri())
-                                .setType(Thumbnail.Type.FRONT_COVER)
-                                .build()
-                        }
-                    ).build()
+                    .setTitle(cached?.title)
+                    .setArtistName(cached?.artistName)
+                    .setArtistUri(cached?.artistUri)
+                    .setAlbumTitle(cached?.albumTitle)
+                    .setAlbumUri(cached?.albumUri)
+                    .setDurationMs(cached?.durationMs)
+                    .setThumbnail(cached?.thumbnail)
+                    .build()
                 emit(Result.Success(audio))
             }
         }
@@ -344,7 +404,9 @@ class InnerTubeDataSource(
                     return@flow
                 }
                 val playlist = page.playlist.toPlaylist()
-                emit(Result.Success(playlist to page.songs.map { it.toAudio() }))
+                val songs = page.songs.map { it.toAudio() }
+                prewarmStreams(songs.map { it.uri.lastPathSegment!! })
+                emit(Result.Success(playlist to songs))
             }
         }
 
@@ -390,6 +452,25 @@ class InnerTubeDataSource(
                 }
             } ?: emptyList()
         Result.Success(results)
+    }
+
+    /**
+     * Directly resolves a youtubemusicc:// audio URI to an HTTPS stream URL.
+     * Used by ResolvingDataSource in PlaybackService for lazy resolution —
+     * called only when ExoPlayer actually needs bytes, not before.
+     */
+    suspend fun resolveStreamUriDirect(audioUri: Uri): Uri? {
+        if (audioUri.scheme != "youtubemusicc") return null
+        val videoId = audioUri.lastPathSegment ?: return null
+        var result: Uri? = null
+        providersManager.doWithInstanceOf(audioUri) {
+            val cached = getCachedStream(videoId)
+            val url = cached ?: client.getStreamUrl(videoId)
+                ?.also { putCachedStream(videoId, it) }
+            result = url?.toUri()
+            org.lineageos.twelve.models.Result.Success(Unit)
+        }
+        return result
     }
 
     // Unsupported write operations
